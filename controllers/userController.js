@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import { onlineUsers } from '../socket/wsServer.js';
 
 // Generate Token
 const generateToken = (id) => {
@@ -72,7 +73,15 @@ export const loginUser = async (req, res) => {
 export const getUsers = async (req, res) => {
   try {
     const users = await User.find({});
-    res.json(users);
+    
+    // Add isOnline status to each user
+    const usersWithStatus = users.map(user => {
+      const userObj = user.toObject();
+      userObj.isOnline = onlineUsers.has(user._id.toString());
+      return userObj;
+    });
+
+    res.json(usersWithStatus);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

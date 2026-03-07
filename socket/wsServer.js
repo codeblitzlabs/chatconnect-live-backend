@@ -2,6 +2,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
 import url from 'url';
 
+// Set to track online user IDs
+export const onlineUsers = new Set();
+
 const initWebSocket = (server) => {
   const wss = new WebSocketServer({ server });
 
@@ -18,15 +21,23 @@ const initWebSocket = (server) => {
       return;
     }
 
+    let userId;
     try {
-      jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+      ws.userId = userId;
+      onlineUsers.add(userId);
+      console.log(`User ${userId} is now online`);
+      
+      // Notify all clients that a user came online
+      broadcastOnlineStatus(wss);
     } catch (err) {
       console.log(`Unauthorized connection attempt from ${ip}: Invalid token`);
       ws.close(1008, 'Policy Violation: Invalid Token');
       return;
     }
 
-    console.log(`New WebSocket connection from ${ip}`);
+    console.log(`New WebSocket connection from ${ip} (User: ${userId})`);
 
     // Optional: ping/pong to detect dead connections
     ws.isAlive = true;
@@ -35,17 +46,34 @@ const initWebSocket = (server) => {
     ws.on('message', (message) => {
       const text = message.toString(); // convert Buffer to string
       const timestamp = new Date().toISOString();
-      console.log(`[${timestamp}] Message from ${ip}: size=${Buffer.byteLength(message)} bytes, type=${typeof text}`);
+      console.log(`[${timestamp}] Message from ${userId} (${ip}): size=${Buffer.byteLength(message)} bytes, type=${typeof text}`);
 
       // Broadcast to all other clients
       wss.clients.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(text);
+          client.send(JSON.stringify({
+            type: 'message',
+            from: userId,
+            text,
+            timestamp
+          }));
         }
       });
     });
 
     ws.on('close', () => {
+      if (ws.userId) {
+        // Check if user has other connections before removing from onlineUsers
+        const otherConnections = Array.from(wss.clients).some(client => 
+          client !== ws && client.userId === ws.userId && client.readyState === WebSocket.OPEN
+        );
+        
+        if (!otherConnections) {
+          onlineUsers.delete(ws.userId);
+          console.log(`User ${ws.userId} is now offline`);
+          broadcastOnlineStatus(wss);
+        }
+      }
       console.log(`Connection closed from ${ip}`);
     });
 
@@ -53,8 +81,21 @@ const initWebSocket = (server) => {
       console.error('WebSocket error:', error);
     });
 
-    ws.send('Welcome to ChatConnect WebSocket Server!');
+    ws.send(JSON.stringify({ type: 'welcome', message: 'Welcome to ChatConnect WebSocket Server!' }));
   });
+
+  // Helper to broadcast online status to all clients
+  const broadcastOnlineStatus = (wss) => {
+    const statusUpdate = JSON.stringify({
+      type: 'online_status',
+      onlineUsers: Array.from(onlineUsers)
+    });
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(statusUpdate);
+      }
+    });
+  };
 
   // Heartbeat interval — removes dead connections every 30s
   const interval = setInterval(() => {
