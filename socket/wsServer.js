@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
 import url from 'url';
+import Message from '../models/Message.js';
 
 // Set to track online user IDs
 export const onlineUsers = new Set();
@@ -43,22 +44,60 @@ const initWebSocket = (server) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
 
-    ws.on('message', (message) => {
-      const text = message.toString(); // convert Buffer to string
-      const timestamp = new Date().toISOString();
-      console.log(`[${timestamp}] Message from ${userId} (${ip}): size=${Buffer.byteLength(message)} bytes, type=${typeof text}`);
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        const { receiverId, text, type } = data;
+        const timestamp = new Date().toISOString();
 
-      // Broadcast to all other clients
-      wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({
-            type: 'message',
+        console.log(`[${timestamp}] Message from ${userId} to ${receiverId || 'all'}: ${text}`);
+
+        if (type === 'direct_message' && receiverId) {
+          // One-to-one chat logic
+          const newMessage = await Message.create({
+            sender: userId,
+            receiver: receiverId,
+            text
+          });
+
+          const messageToSend = JSON.stringify({
+            type: 'direct_message',
+            _id: newMessage._id,
             from: userId,
+            to: receiverId,
             text,
-            timestamp
-          }));
+            timestamp: newMessage.createdAt
+          });
+
+          // Send to recipient if online
+          let recipientFound = false;
+          wss.clients.forEach((client) => {
+            if (client.userId === receiverId && client.readyState === WebSocket.OPEN) {
+              client.send(messageToSend);
+              recipientFound = true;
+            }
+          });
+
+          // Also send back to sender for confirmation/sync if needed
+          // (Frontend usually handles this, but it's good to confirm delivery)
+          ws.send(messageToSend);
+
+        } else {
+          // Default broadcast logic (optional, keep for backward compatibility or general announcements)
+          wss.clients.forEach((client) => {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({
+                type: 'message',
+                from: userId,
+                text,
+                timestamp
+              }));
+            }
+          });
         }
-      });
+      } catch (err) {
+        console.error('Error handling message:', err);
+      }
     });
 
     ws.on('close', () => {
