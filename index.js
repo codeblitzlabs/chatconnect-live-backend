@@ -12,7 +12,11 @@ dotenv.config();
 connectDB();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL || '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 const server = http.createServer(app);
 
 initWebSocket(server);
@@ -23,6 +27,11 @@ const PORT = process.env.PORT || 3000;
 
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
+
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
 app.get('/test', (req, res) => {
   res.json({ message: 'Express server is running!' });
