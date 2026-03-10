@@ -1,8 +1,10 @@
 import http from 'http';
 import express from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import userRoutes from './routes/userRoutes.js';
+import messageRoutes from './routes/messageRoutes.js';
 import initWebSocket from './socket/wsServer.js';
 
 dotenv.config();
@@ -10,6 +12,7 @@ dotenv.config();
 connectDB();
 
 const app = express();
+app.use(cors());
 const server = http.createServer(app);
 
 initWebSocket(server);
@@ -19,6 +22,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.use('/api/users', userRoutes);
+app.use('/api/messages', messageRoutes);
 
 app.get('/test', (req, res) => {
   res.json({ message: 'Express server is running!' });
